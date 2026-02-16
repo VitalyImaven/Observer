@@ -3,27 +3,35 @@
 import { useState, useRef, useCallback } from "react";
 
 interface UseAudioCaptureOptions {
-  onAudioChunk: (blob: Blob) => void;
-  chunkDurationMs?: number;
+  onSpeechComplete: (blob: Blob) => void;
   silenceThreshold?: number;
-  minSpeechHits?: number;
+  silenceTimeoutMs?: number;
 }
 
 export function useAudioCapture({
-  onAudioChunk,
-  chunkDurationMs = 6000,
+  onSpeechComplete,
   silenceThreshold = 0.03,
-  minSpeechHits = 3,
+  silenceTimeoutMs = 2000,
 }: UseAudioCaptureOptions) {
   const [isRecording, setIsRecording] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const activeRef = useRef(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
 
-  // Check current audio level
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const monitorRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const mimeTypeRef = useRef<string>("audio/webm");
+  const activeRef = useRef(false);
+
+  // Speech state
+  const stateRef = useRef<"idle" | "recording" | "silence">("idle");
+  const silenceStartRef = useRef<number>(0);
+  const onSpeechCompleteRef = useRef(onSpeechComplete);
+  onSpeechCompleteRef.current = onSpeechComplete;
+
   const getAudioLevel = useCallback((): number => {
     const analyser = analyserRef.current;
     if (!analyser) return 0;
@@ -36,62 +44,93 @@ export function useAudioCapture({
     return Math.sqrt(sum / data.length);
   }, []);
 
-  const speechHitsRef = useRef(0);
-  const monitorRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startMediaRecorder = useCallback(() => {
+    const stream = streamRef.current;
+    if (!stream || !stream.active) return;
 
-  const recordChunk = useCallback(
-    (stream: MediaStream, mimeType: string) => {
-      if (!activeRef.current || !stream.active) return;
+    chunksRef.current = [];
+    const recorder = new MediaRecorder(stream, { mimeType: mimeTypeRef.current });
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    recorder.start();
+    recorderRef.current = recorder;
+    console.log("[AUDIO] MediaRecorder started — recording speech");
+  }, []);
 
-      const recorder = new MediaRecorder(stream, { mimeType });
-      const chunks: BlobPart[] = [];
-      speechHitsRef.current = 0;
+  const stopMediaRecorder = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state !== "recording") return;
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      // Monitor audio level every 200ms during this chunk
-      monitorRef.current = setInterval(() => {
-        const level = getAudioLevel();
-        if (level > silenceThreshold) {
-          speechHitsRef.current++;
-        }
-      }, 200);
-
+    return new Promise<Blob | null>((resolve) => {
       recorder.onstop = () => {
-        if (monitorRef.current) {
-          clearInterval(monitorRef.current);
-          monitorRef.current = null;
+        const chunks = chunksRef.current;
+        chunksRef.current = [];
+        if (chunks.length > 0) {
+          const blob = new Blob(chunks, { type: mimeTypeRef.current });
+          resolve(blob);
+        } else {
+          resolve(null);
         }
+      };
+      recorder.stop();
+      recorderRef.current = null;
+    });
+  }, []);
 
-        // Only send if we had sustained speech (multiple hits above threshold)
-        // minSpeechHits=3 means at least 3 x 200ms = 600ms of speech
-        const hadSpeech = speechHitsRef.current >= minSpeechHits;
+  const startMonitor = useCallback(() => {
+    if (monitorRef.current) return;
 
-        if (chunks.length > 0 && hadSpeech && activeRef.current) {
-          const blob = new Blob(chunks, { type: mimeType });
-          if (blob.size > 4000) {
-            onAudioChunk(blob);
+    monitorRef.current = setInterval(() => {
+      if (!activeRef.current) return;
+
+      const level = getAudioLevel();
+      const speaking = level > silenceThreshold;
+      const now = Date.now();
+
+      if (stateRef.current === "idle") {
+        if (speaking) {
+          // Speech started — begin recording
+          stateRef.current = "recording";
+          setIsSpeaking(true);
+          startMediaRecorder();
+          console.log("[AUDIO] Speech detected — started recording");
+        }
+      } else if (stateRef.current === "recording") {
+        if (!speaking) {
+          // Silence just started during recording
+          stateRef.current = "silence";
+          silenceStartRef.current = now;
+        }
+      } else if (stateRef.current === "silence") {
+        if (speaking) {
+          // Speech resumed — go back to recording
+          stateRef.current = "recording";
+          silenceStartRef.current = 0;
+          console.log("[AUDIO] Speech resumed during silence window");
+        } else {
+          // Still silent — check if 2s passed
+          const elapsed = now - silenceStartRef.current;
+          if (elapsed >= silenceTimeoutMs) {
+            // 2 seconds of silence confirmed — stop recording and emit
+            console.log(`[AUDIO] ${silenceTimeoutMs}ms silence — stopping recorder, sending audio`);
+            stateRef.current = "idle";
+            setIsSpeaking(false);
+            silenceStartRef.current = 0;
+
+            stopMediaRecorder().then((blob) => {
+              if (blob && blob.size > 1000) {
+                console.log(`[AUDIO] Sending speech blob: ${blob.size} bytes`);
+                onSpeechCompleteRef.current(blob);
+              } else {
+                console.log("[AUDIO] Blob too small, skipping");
+              }
+            });
           }
         }
-
-        // Start next chunk
-        if (activeRef.current && stream.active) {
-          recordChunk(stream, mimeType);
-        }
-      };
-
-      recorder.start();
-
-      timeoutRef.current = setTimeout(() => {
-        if (recorder.state === "recording") {
-          recorder.stop();
-        }
-      }, chunkDurationMs);
-    },
-    [onAudioChunk, chunkDurationMs, getAudioLevel, silenceThreshold, minSpeechHits]
-  );
+      }
+    }, 100);
+  }, [getAudioLevel, silenceThreshold, silenceTimeoutMs, startMediaRecorder, stopMediaRecorder]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -106,7 +145,6 @@ export function useAudioCapture({
       });
       streamRef.current = stream;
 
-      // Set up audio analyser for silence detection
       const audioCtx = new AudioContext();
       audioCtxRef.current = audioCtx;
       const source = audioCtx.createMediaStreamSource(stream);
@@ -115,33 +153,37 @@ export function useAudioCapture({
       source.connect(analyser);
       analyserRef.current = analyser;
 
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      mimeTypeRef.current = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
         : MediaRecorder.isTypeSupported("audio/webm")
         ? "audio/webm"
         : "audio/mp4";
 
       activeRef.current = true;
+      stateRef.current = "idle";
       setIsRecording(true);
+      setIsSpeaking(false);
 
-      recordChunk(stream, mimeType);
+      startMonitor();
+      console.log("[AUDIO] Listening started — waiting for speech...");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to access microphone"
       );
     }
-  }, [recordChunk]);
+  }, [startMonitor]);
 
   const stopRecording = useCallback(() => {
     activeRef.current = false;
+    stateRef.current = "idle";
 
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
     if (monitorRef.current) {
       clearInterval(monitorRef.current);
       monitorRef.current = null;
+    }
+    if (recorderRef.current && recorderRef.current.state === "recording") {
+      recorderRef.current.stop();
+      recorderRef.current = null;
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -152,9 +194,11 @@ export function useAudioCapture({
       audioCtxRef.current = null;
     }
     analyserRef.current = null;
+    chunksRef.current = [];
 
     setIsRecording(false);
+    setIsSpeaking(false);
   }, []);
 
-  return { isRecording, error, startRecording, stopRecording };
+  return { isRecording, isSpeaking, error, startRecording, stopRecording };
 }

@@ -2,10 +2,16 @@
 
 import { useState, useCallback, useRef } from "react";
 
-export function useStreamingAnswer() {
+interface UseStreamingAnswerOptions {
+  onAnswerComplete?: (answer: string) => void;
+}
+
+export function useStreamingAnswer(options?: UseStreamingAnswerOptions) {
   const [answer, setAnswer] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const onCompleteRef = useRef(options?.onAnswerComplete);
+  onCompleteRef.current = options?.onAnswerComplete;
 
   const generateAnswer = useCallback(
     async (question: string, context?: string) => {
@@ -57,6 +63,11 @@ export function useStreamingAnswer() {
               }
             }
           }
+        }
+
+        // Notify when a real answer was generated
+        if (accumulated && onCompleteRef.current) {
+          onCompleteRef.current(accumulated);
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {

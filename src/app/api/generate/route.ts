@@ -32,30 +32,52 @@ export async function POST(request: Request) {
   }
 
   const developerPrompt = [
-    "You are an expert meeting assistant helping a startup founder answer venture capital investor questions.",
-    "IMPORTANT: Detect the language of the investor's question and ALWAYS respond in the SAME language. If the question is in Hebrew, respond in Hebrew. If in English, respond in English. Match the language exactly.",
-    "TONE & STYLE: Write answers in a natural, conversational tone — as if the founder is speaking out loud in a real meeting. The other side should feel like they are having a natural conversation, NOT reading a document.",
-    "Keep answers medium length — not too short (don't sound dismissive) and not too long (don't bore the investor). Aim for 2-4 natural sentences.",
-    "Use casual-professional language. Avoid bullet points, headers, or overly structured formatting. Write flowing sentences that are easy to read aloud.",
-    "Sound confident and human — use phrases like 'Look, ...', 'The way we see it...', 'What's interesting is...', 'So basically...' to make it feel like real speech.",
+    "You are a real-time meeting assistant for a startup founder in a venture capital meeting.",
+    "",
+    "HOW THIS WORKS:",
+    "You receive the full conversation transcript so far. The latest speech is what was just said.",
+    "Your job: analyze the latest speech and decide — is there a QUESTION that needs an answer?",
+    "- If YES (someone asked a question — investor OR founder): provide a great answer.",
+    "- If NO (it was just a statement, small talk, or not something that needs a response): respond with exactly: [NO_ANSWER_NEEDED]",
+    "",
+    "LANGUAGE: Detect the language being spoken and ALWAYS respond in the SAME language.",
+    "",
+    "ANSWER STYLE:",
+    "- Natural, conversational tone — the founder will READ this aloud. It must sound like a real person talking, NOT a document.",
+    "- Medium length: 2-4 sentences. Not too short, not too long.",
+    "- Casual-professional. No bullet points, no headers, no markdown formatting. Just flowing speech.",
+    "- Sound confident and human.",
+    "",
+    "DATA & NUMBERS:",
+    "- ALWAYS use real data from the uploaded documents below. Numbers, metrics, percentages — take them from the knowledge base.",
+    "- Do NOT invent or hallucinate numbers. If the knowledge base has the data, use it exactly.",
+    "- Only if the knowledge base has NO relevant data for a specific question, you may use general knowledge — but prefer saying 'we are still finalizing those numbers' over making things up.",
     activeDirective
       ? `\nActive Directive: "${activeDirective.name}"\n${activeDirective.content}`
       : "",
     knowledgeContext,
-    context ? `\nConversation context so far:\n${context}` : "",
   ]
     .filter(Boolean)
     .join("\n");
 
-  // GPT-5.2 uses 'developer' role instead of 'system'
+  const userContent = context
+    ? `FULL CONVERSATION SO FAR:\n${context}\n\nLATEST SPEECH (just now):\n"${question}"\n\nIf the latest speech contains a question, provide the answer. If not, respond with [NO_ANSWER_NEEDED].`
+    : `LATEST SPEECH:\n"${question}"\n\nIf this contains a question, provide the answer. If not, respond with [NO_ANSWER_NEEDED].`;
+
+  console.log(`\n[GENERATE] ========================================`);
+  console.log(`[GENERATE] Latest speech: "${question}"`);
+  console.log(`[GENERATE] Speech length: ${question.length} chars`);
+  console.log(`[GENERATE] Model: ${model}`);
+  console.log(`[GENERATE] Directive: ${activeDirective ? activeDirective.name : "none"}`);
+  console.log(`[GENERATE] Knowledge: ${knowledgeContext ? "yes" : "no"}`);
+  console.log(`[GENERATE] Conversation context: ${context ? "yes (" + context.length + " chars)" : "none"}`);
+  console.log(`[GENERATE] ========================================\n`);
+
   const stream = await client.chat.completions.create({
     model,
     messages: [
       { role: "developer", content: developerPrompt },
-      {
-        role: "user",
-        content: `The investor asked: "${question}"\n\nProvide the best answer:`,
-      },
+      { role: "user", content: userContent },
     ],
     stream: true,
     temperature: 0.7,
@@ -65,9 +87,18 @@ export async function POST(request: Request) {
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
+      let fullResponse = "";
       for await (const chunk of stream) {
         const text = chunk.choices[0]?.delta?.content || "";
         if (text) {
+          fullResponse += text;
+          // Check if model says no answer needed — don't stream it
+          if (fullResponse.includes("[NO_ANSWER_NEEDED]")) {
+            console.log("[GENERATE] Model decided: no answer needed");
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+            return;
+          }
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ text })}\n\n`)
           );
