@@ -17,7 +17,7 @@ export function getEmbeddingModel(): string {
   return (
     settings.embeddingModel ||
     process.env.OPENAI_EMBEDDING_MODEL ||
-    "text-embedding-3-small"
+    "text-embedding-3-large"
   );
 }
 

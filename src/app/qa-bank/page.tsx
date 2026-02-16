@@ -562,10 +562,24 @@ export default function QABankPage() {
       )}
 
       {pairs.length > 0 && (
-        <div className="mt-6 text-center text-xs text-text-muted">
-          {pairs.length} Q&A pair{pairs.length !== 1 ? "s" : ""} •{" "}
-          {pairs.filter((p) => p.embedding).length} with embeddings (ready for
-          matching)
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <div className="text-xs text-text-muted">
+            {pairs.length} Q&A pair{pairs.length !== 1 ? "s" : ""} •{" "}
+            {pairs.filter((p) => p.embedding).length} with embeddings
+          </div>
+          <button
+            onClick={async () => {
+              setLoading(true);
+              try {
+                await fetch("/api/qa/reembed", { method: "POST" });
+                await fetchPairs();
+              } catch { /* ignore */ }
+              setLoading(false);
+            }}
+            className="text-xs text-accent hover:text-accent-hover transition-colors underline"
+          >
+            Re-generate all embeddings (use after changing embedding model)
+          </button>
         </div>
       )}
     </div>

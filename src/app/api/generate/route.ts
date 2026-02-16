@@ -87,23 +87,54 @@ export async function POST(request: Request) {
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
-      let fullResponse = "";
+      let buffer = "";
+      let flushed = false;
+
       for await (const chunk of stream) {
         const text = chunk.choices[0]?.delta?.content || "";
-        if (text) {
-          fullResponse += text;
-          // Check if model says no answer needed — don't stream it
-          if (fullResponse.includes("[NO_ANSWER_NEEDED]")) {
+        if (!text) continue;
+
+        buffer += text;
+
+        // Buffer the first 25 chars to check for [NO_ANSWER_NEEDED]
+        if (!flushed) {
+          if (buffer.includes("[NO_ANSWER_NEEDED]")) {
             console.log("[GENERATE] Model decided: no answer needed");
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
             return;
           }
+          // Once we have enough chars and it's not the marker, flush buffer
+          if (buffer.length >= 25) {
+            flushed = true;
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ text: buffer })}\n\n`)
+            );
+          }
+          continue;
+        }
+
+        // After flush, stream normally
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ text })}\n\n`)
+        );
+      }
+
+      // Handle short responses that never reached 25 chars
+      if (!flushed) {
+        if (buffer.includes("[NO_ANSWER_NEEDED]")) {
+          console.log("[GENERATE] Model decided: no answer needed");
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+          return;
+        }
+        if (buffer) {
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ text })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ text: buffer })}\n\n`)
           );
         }
       }
+
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       controller.close();
     },

@@ -30,6 +30,9 @@ interface AnswerEntry {
   speech: string;
   answer: string;
   timestamp: number;
+  source: "ai" | "qa-bank";
+  similarity?: number;
+  matchedQuestion?: string;
 }
 
 export default function MeetingDashboard() {
@@ -64,6 +67,7 @@ export default function MeetingDashboard() {
       speech,
       answer: completedAnswer,
       timestamp: Date.now(),
+      source: "ai",
     }, ...prev]);
   }, []);
 
@@ -143,18 +147,30 @@ export default function MeetingDashboard() {
       console.log(`[FLOW] Sending to model. Mode: ${modeRef.current}`);
 
       if (modeRef.current === "live") {
+        // Live AI mode — always send to model (model decides if answer needed)
         generateAnswerRef.current(text, fullContext);
       } else {
+        // Q&A Match mode — first check Q&A bank, fallback to AI
+        // Note: similarity can come from AI re-ranking (60-100) or embeddings (40-85)
+        const MIN_SIMILARITY = 60;
         const matches = await matchQARef.current(text);
-        if (matches && matches.length > 0) {
+        const goodMatch = matches?.find((m: { similarity: number }) => m.similarity >= MIN_SIMILARITY);
+
+        if (goodMatch) {
+          console.log(`[FLOW] Q&A match found: ${goodMatch.similarity}% — "${goodMatch.question}"`);
           setQaMatches(matches);
           setAnswerHistory((prev) => [{
             id: Date.now().toString(),
             speech: text,
-            answer: matches[0].answer,
+            answer: goodMatch.answer,
             timestamp: Date.now(),
+            source: "qa-bank",
+            similarity: goodMatch.similarity,
+            matchedQuestion: goodMatch.question,
           }, ...prev]);
         } else {
+          // No match above 80% — send to AI model (model decides if answer needed)
+          console.log(`[FLOW] No Q&A match above ${MIN_SIMILARITY}% — sending to AI`);
           generateAnswerRef.current(text, fullContext);
         }
       }
@@ -185,7 +201,7 @@ export default function MeetingDashboard() {
   }, []);
 
   useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
-  useEffect(() => { transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [transcript]);
+  useEffect(() => { transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [transcript]);
   useEffect(() => { if (isGenerating) answerTopRef.current?.scrollIntoView({ behavior: "smooth" }); }, [isGenerating]);
 
   // Clear streaming answer once saved to history
@@ -375,66 +391,70 @@ export default function MeetingDashboard() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Transcript */}
-        <div className="w-1/2 border-r border-border flex flex-col min-w-0">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-bg-secondary/30">
-            <Volume2 className="w-4 h-4 text-text-muted" />
-            <span className="text-sm font-medium">Live Transcript</span>
-            <span className="text-xs text-text-muted ml-auto">
-              {transcript.length} entries
+        {/* Left: Transcript — dark, minimal, compact */}
+        <div className="w-[42%] border-r border-border flex flex-col min-w-0 bg-bg-primary">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/60">
+            <Volume2 className="w-3.5 h-3.5 text-text-muted" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Transcript</span>
+            <span className="text-xs text-text-muted/60 ml-auto">
+              {transcript.length}
             </span>
           </div>
-          <div className="flex-1 overflow-auto p-4">
+          <div className="flex-1 overflow-auto px-3 py-3">
             {transcript.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-text-muted">
                 {isRecording ? (
                   <>
-                    <Radio className="w-10 h-10 mb-3 animate-pulse opacity-40" />
-                    <p className="text-sm">Listening for speech...</p>
-                    <p className="text-xs mt-1">Speak or play your meeting audio</p>
+                    <Radio className="w-8 h-8 mb-2 animate-pulse opacity-30" />
+                    <p className="text-xs">Listening for speech...</p>
                   </>
                 ) : (
                   <>
-                    <MicOff className="w-10 h-10 mb-3 opacity-20" />
-                    <p className="text-sm">Click &quot;Start Listening&quot; to begin</p>
-                    <p className="text-xs mt-1">Observer will capture and transcribe the conversation</p>
+                    <MicOff className="w-8 h-8 mb-2 opacity-15" />
+                    <p className="text-xs">Click &quot;Start Listening&quot;</p>
                   </>
                 )}
               </div>
             ) : (
-              <div className="space-y-3">
-                {transcript.map((entry) => (
+              <div className="space-y-2">
+                <div ref={transcriptEndRef} />
+                {[...transcript].reverse().map((entry, i) => (
                   <div
                     key={entry.id}
-                    className="animate-fade-in rounded-lg p-3 bg-bg-secondary border border-border"
+                    className={`animate-fade-in rounded-lg px-3 py-2.5 transition-all ${
+                      i === 0
+                        ? "bg-accent/10 border-l-[3px] border-l-accent border border-accent/20"
+                        : "border-l-[3px] border-l-transparent border border-transparent hover:bg-bg-secondary/40"
+                    }`}
                   >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium text-text-muted">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className={`text-[10px] font-semibold uppercase tracking-wide ${i === 0 ? "text-accent" : "text-text-muted/50"}`}>
                         {entry.speaker}
                       </span>
-                      <span className="text-xs text-text-muted ml-auto">
-                        {new Date(entry.timestamp).toLocaleTimeString()}
+                      <span className="text-[10px] text-text-muted/40 ml-auto">
+                        {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </span>
                     </div>
-                    <p className="text-sm" dir={getTextDirection(entry.text)}>{entry.text}</p>
+                    <p className={`text-[13px] leading-relaxed ${i === 0 ? "text-text-primary font-medium" : "text-text-secondary"}`} dir={getTextDirection(entry.text)}>
+                      {entry.text}
+                    </p>
                   </div>
                 ))}
-                <div ref={transcriptEndRef} />
               </div>
             )}
           </div>
         </div>
 
-        {/* Right: Answer Stack */}
-        <div className="w-1/2 flex flex-col min-w-0">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-bg-secondary/30">
+        {/* Right: Answer Stack — wider, richer, prominent */}
+        <div className="w-[58%] flex flex-col min-w-0 bg-gradient-to-b from-bg-secondary/60 to-bg-primary">
+          <div className="flex items-center gap-2 px-5 py-2.5 border-b border-border/60 bg-bg-secondary/30">
             <Sparkles className="w-4 h-4 text-accent" />
-            <span className="text-sm font-medium">
+            <span className="text-sm font-bold">
               {mode === "live" ? "AI Answers" : "Matched Answers"}
             </span>
             {(answerHistory.length > 0 || isGenerating) && (
-              <span className="text-xs text-text-muted">
-                {answerHistory.length}{isGenerating ? " + 1" : ""} answers
+              <span className="text-xs text-text-muted bg-bg-hover px-2 py-0.5 rounded-full">
+                {answerHistory.length}{isGenerating ? "+1" : ""}
               </span>
             )}
             <div className="ml-auto flex items-center gap-2">
@@ -458,30 +478,33 @@ export default function MeetingDashboard() {
               )}
             </div>
           </div>
-          <div className="flex-1 overflow-auto p-4">
+          <div className="flex-1 overflow-auto px-5 py-4">
             <div ref={answerTopRef} />
 
             {!answer && !isGenerating && answerHistory.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-text-muted">
-                <Sparkles className="w-10 h-10 mb-3 opacity-20" />
+                <Sparkles className="w-12 h-12 mb-3 opacity-10" />
                 <p className="text-sm">Waiting for a question...</p>
-                <p className="text-xs mt-1">
+                <p className="text-xs mt-1 text-text-muted/60">
                   {mode === "live"
                     ? "AI will generate answers after someone speaks"
                     : "Matching against your Q&A bank"}
                 </p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {/* Currently generating — top */}
+              <div className="space-y-5">
+                {/* Currently generating — top with glow */}
                 {(isGenerating || answer) && (
-                  <div className="animate-fade-in rounded-xl border-2 border-accent/40 bg-accent-dim/30 overflow-hidden">
+                  <div className="animate-fade-in animate-glow rounded-2xl border-2 border-accent/50 bg-gradient-to-br from-accent/10 via-bg-secondary to-bg-secondary overflow-hidden shadow-lg shadow-accent/5">
                     {currentSpeech && (
-                      <div className="px-4 pt-3 pb-2 border-b border-accent/20">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-medium text-accent">Speech</span>
-                          <span className="text-xs text-text-muted ml-auto">
-                            {new Date().toLocaleTimeString()}
+                      <div className="px-5 pt-4 pb-2.5 border-b border-accent/15 bg-accent/5">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="text-xs font-semibold text-accent uppercase tracking-wide">Speech</span>
+                          <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full font-semibold animate-pulse">
+                            AI Generating...
+                          </span>
+                          <span className="text-[10px] text-text-muted/50 ml-auto">
+                            {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                           </span>
                         </div>
                         <p className="text-sm text-text-secondary" dir={getTextDirection(currentSpeech)}>
@@ -489,17 +512,17 @@ export default function MeetingDashboard() {
                         </p>
                       </div>
                     )}
-                    <div className="px-4 py-3">
+                    <div className="px-5 py-4">
                       {answer ? (
-                        <div className="prose prose-sm prose-invert max-w-none" dir={getTextDirection(answer)}>
+                        <div className="prose prose-sm prose-invert max-w-none text-[15px] leading-relaxed" dir={getTextDirection(answer)}>
                           <ReactMarkdown>{answer}</ReactMarkdown>
                           {isGenerating && (
-                            <span className="inline-block w-2 h-4 bg-accent ml-0.5 animate-pulse-live" />
+                            <span className="inline-block w-2 h-5 bg-accent ml-0.5 animate-pulse-live rounded-sm" />
                           )}
                         </div>
                       ) : (
                         <div className="flex items-center gap-2 text-text-muted">
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin text-accent" />
                           <span className="text-sm">Generating answer...</span>
                         </div>
                       )}
@@ -507,41 +530,78 @@ export default function MeetingDashboard() {
                   </div>
                 )}
 
-                {/* History — newest first */}
-                {answerHistory.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="animate-fade-in rounded-xl border border-border bg-bg-secondary overflow-hidden"
-                  >
-                    <div className="px-4 pt-3 pb-2 border-b border-border">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-medium text-text-muted">Speech</span>
-                        <span className="text-xs text-text-muted ml-auto">
-                          {new Date(entry.timestamp).toLocaleTimeString()}
-                        </span>
-                        <button
-                          onClick={() => handleCopy(entry.answer, entry.id)}
-                          className="flex items-center text-text-muted hover:text-text-primary transition-colors"
-                          title="Copy answer"
-                        >
-                          {copiedId === entry.id ? (
-                            <Check className="w-3.5 h-3.5 text-success" />
+                {/* History — newest first, first one highlighted */}
+                {answerHistory.map((entry, i) => {
+                  const isLatest = i === 0 && !isGenerating && !answer;
+                  const isQA = entry.source === "qa-bank";
+                  return (
+                    <div
+                      key={entry.id}
+                      className={`animate-fade-in rounded-2xl overflow-hidden transition-all ${
+                        isLatest
+                          ? isQA
+                            ? "border-2 border-emerald-500/50 bg-gradient-to-br from-emerald-950/30 to-bg-secondary shadow-lg shadow-emerald-500/5"
+                            : "border-2 border-accent/40 bg-gradient-to-br from-accent/8 to-bg-secondary shadow-lg shadow-accent/5"
+                          : isQA
+                            ? "border border-emerald-500/20 bg-emerald-950/10"
+                            : "border border-border/60 bg-bg-secondary/60"
+                      }`}
+                    >
+                      <div className={`px-5 pt-3.5 pb-2.5 border-b ${
+                        isLatest ? (isQA ? "border-emerald-500/15 bg-emerald-500/5" : "border-accent/15 bg-accent/5") : "border-border/40"
+                      }`}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className={`text-[10px] font-semibold uppercase tracking-wide ${isLatest ? "text-text-secondary" : "text-text-muted/50"}`}>Speech</span>
+                          {isQA ? (
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                              isLatest ? "bg-emerald-500/25 text-emerald-400" : "bg-emerald-500/15 text-emerald-400/70"
+                            }`}>
+                              Q&A Bank {entry.similarity ? `· ${entry.similarity}%` : ""}
+                            </span>
                           ) : (
-                            <Copy className="w-3.5 h-3.5" />
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                              isLatest ? "bg-blue-500/25 text-blue-400" : "bg-blue-500/15 text-blue-400/70"
+                            }`}>
+                              AI Generated
+                            </span>
                           )}
-                        </button>
+                          {isLatest && (
+                            <span className="text-[10px] bg-accent/20 text-accent px-2 py-0.5 rounded-full font-semibold">
+                              Latest
+                            </span>
+                          )}
+                          <span className="text-[10px] text-text-muted/40 ml-auto">
+                            {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </span>
+                          <button
+                            onClick={() => handleCopy(entry.answer, entry.id)}
+                            className="flex items-center text-text-muted/50 hover:text-text-primary transition-colors"
+                            title="Copy answer"
+                          >
+                            {copiedId === entry.id ? (
+                              <Check className="w-3.5 h-3.5 text-success" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+                        <p className={`text-sm ${isLatest ? "text-text-secondary" : "text-text-muted"}`} dir={getTextDirection(entry.speech)}>
+                          {entry.speech}
+                        </p>
+                        {isQA && entry.matchedQuestion && (
+                          <p className="text-[11px] text-emerald-400/60 mt-1" dir={getTextDirection(entry.matchedQuestion)}>
+                            Matched: &quot;{entry.matchedQuestion}&quot;
+                          </p>
+                        )}
                       </div>
-                      <p className="text-sm text-text-secondary" dir={getTextDirection(entry.speech)}>
-                        {entry.speech}
-                      </p>
-                    </div>
-                    <div className="px-4 py-3">
-                      <div className="prose prose-sm prose-invert max-w-none" dir={getTextDirection(entry.answer)}>
-                        <ReactMarkdown>{entry.answer}</ReactMarkdown>
+                      <div className={`px-5 py-4 ${isLatest ? "" : "opacity-80"}`}>
+                        <div className={`prose prose-sm prose-invert max-w-none ${isLatest ? "text-[15px] leading-relaxed" : "text-[13px]"}`} dir={getTextDirection(entry.answer)}>
+                          <ReactMarkdown>{entry.answer}</ReactMarkdown>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
