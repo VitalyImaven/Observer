@@ -14,10 +14,14 @@ export async function POST(request: Request) {
     ? directives.find((d) => d.id === settings.activeDirectiveId)
     : null;
 
-  // Gather relevant knowledge
+  // Gather relevant knowledge — filtered by directive's KB if set
   let knowledgeContext = "";
   try {
-    const chunks = getKnowledgeChunks();
+    let chunks = getKnowledgeChunks();
+    const kbId = activeDirective?.knowledgeBaseId;
+    if (kbId) {
+      chunks = chunks.filter((c) => c.knowledgeBaseId === kbId);
+    }
     if (chunks.length > 0 && chunks.some((c) => c.embedding)) {
       const queryEmb = await createEmbedding(question);
       const matches = findTopMatches(queryEmb, chunks, 5);
@@ -32,29 +36,10 @@ export async function POST(request: Request) {
   }
 
   const developerPrompt = [
-    "You are a real-time meeting assistant for a startup founder in a venture capital meeting.",
-    "",
-    "HOW THIS WORKS:",
-    "You receive the full conversation transcript so far. The latest speech is what was just said.",
-    "Your job: analyze the latest speech and decide — is there a QUESTION that needs an answer?",
-    "- If YES (someone asked a question — investor OR founder): provide a great answer.",
-    "- If NO (it was just a statement, small talk, or not something that needs a response): respond with exactly: [NO_ANSWER_NEEDED]",
-    "",
-    "LANGUAGE: Detect the language being spoken and ALWAYS respond in the SAME language.",
-    "",
-    "ANSWER STYLE:",
-    "- Natural, conversational tone — the founder will READ this aloud. It must sound like a real person talking, NOT a document.",
-    "- Medium length: 2-4 sentences. Not too short, not too long.",
-    "- Casual-professional. No bullet points, no headers, no markdown formatting. Just flowing speech.",
-    "- Sound confident and human.",
-    "",
-    "DATA & NUMBERS:",
-    "- ALWAYS use real data from the uploaded documents below. Numbers, metrics, percentages — take them from the knowledge base.",
-    "- Do NOT invent or hallucinate numbers. If the knowledge base has the data, use it exactly.",
-    "- Only if the knowledge base has NO relevant data for a specific question, you may use general knowledge — but prefer saying 'we are still finalizing those numbers' over making things up.",
-    activeDirective
-      ? `\nActive Directive: "${activeDirective.name}"\n${activeDirective.content}`
-      : "",
+    "You are a real-time meeting assistant.",
+    "You receive speech from a live conversation. If the latest speech contains a question that needs an answer, provide the answer. If not, respond with exactly: [NO_ANSWER_NEEDED]",
+    "Detect the spoken language and ALWAYS respond in the SAME language.",
+    activeDirective ? `\n${activeDirective.content}` : "",
     knowledgeContext,
   ]
     .filter(Boolean)

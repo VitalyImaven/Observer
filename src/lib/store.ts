@@ -5,6 +5,7 @@ import type {
   QAPair,
   KnowledgeFile,
   KnowledgeChunk,
+  KnowledgeBase,
   AppSettings,
 } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
@@ -14,6 +15,7 @@ const DIRECTIVES_FILE = path.join(DATA_DIR, "directives.json");
 const QA_FILE = path.join(DATA_DIR, "qa-pairs.json");
 const KNOWLEDGE_FILES_FILE = path.join(DATA_DIR, "knowledge-files.json");
 const KNOWLEDGE_CHUNKS_FILE = path.join(DATA_DIR, "knowledge-chunks.json");
+const KNOWLEDGE_BASES_FILE = path.join(DATA_DIR, "knowledge-bases.json");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const UPLOADS_DIR = path.join(DATA_DIR, "knowledge", "uploads");
 
@@ -36,6 +38,15 @@ function readJson<T>(filePath: string, defaultValue: T): T {
 function writeJson<T>(filePath: string, data: T) {
   ensureDataDir();
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+}
+
+// Knowledge Bases
+export function getKnowledgeBases(): KnowledgeBase[] {
+  return readJson(KNOWLEDGE_BASES_FILE, []);
+}
+
+export function saveKnowledgeBases(bases: KnowledgeBase[]) {
+  writeJson(KNOWLEDGE_BASES_FILE, bases);
 }
 
 // Directives

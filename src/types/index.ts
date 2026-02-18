@@ -1,7 +1,14 @@
+export interface KnowledgeBase {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
 export interface Directive {
   id: string;
   name: string;
   content: string;
+  knowledgeBaseId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -12,6 +19,7 @@ export interface QAPair {
   answer: string;
   tags: string[];
   embedding?: number[];
+  knowledgeBaseId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -25,6 +33,7 @@ export interface KnowledgeFile {
   chunksCount: number;
   processedAt: string;
   createdAt: string;
+  knowledgeBaseId?: string | null;
 }
 
 export interface KnowledgeChunk {
@@ -33,6 +42,7 @@ export interface KnowledgeChunk {
   content: string;
   embedding?: number[];
   index: number;
+  knowledgeBaseId?: string | null;
 }
 
 export interface AppSettings {
@@ -62,7 +72,7 @@ export interface MatchedQA {
 export const DEFAULT_SETTINGS: AppSettings = {
   openaiApiKey: "",
   chatModel: "gpt-5.2",
-  embeddingModel: "text-embedding-3-small",
+  embeddingModel: "text-embedding-3-large",
   transcriptionModel: "gpt-4o-transcribe",
   activeDirectiveId: null,
   mode: "live",

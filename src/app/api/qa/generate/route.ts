@@ -29,9 +29,9 @@ export async function POST(request: Request) {
   }
 
   const developerPrompt = [
-    "You are an expert at preparing startup founders for venture capital meetings.",
-    "Your task is to generate realistic investor questions and craft the BEST possible answers.",
-    "The answers should be confident, data-driven when possible, concise, and impressive to investors.",
+    "You are an expert at preparing people for important meetings, interviews, and conversations.",
+    "Your task is to generate realistic questions that could be asked, and craft the BEST possible answers.",
+    "The answers should be confident, data-driven when possible, concise, and impressive.",
     "",
     "You MUST respond ONLY with a valid JSON array. No markdown, no code fences, no explanation outside the JSON.",
     "Each item must have exactly these fields: \"question\" (string) and \"answer\" (string).",
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 
   const userPrompt =
     prompt ||
-    `Generate ${count || 20} realistic venture capital investor questions with excellent answers. Cover topics like: market size, business model, revenue, traction, team, competition, moat, unit economics, fundraising, exit strategy, risks, and growth plans.`;
+    `Generate ${count || 20} realistic questions that could be asked in this context, with excellent answers. Cover all relevant topics based on the knowledge base provided.`;
 
   try {
     const response = await client.chat.completions.create({

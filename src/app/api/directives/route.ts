@@ -16,6 +16,7 @@ export async function POST(request: Request) {
     id: uuidv4(),
     name: body.name || "Untitled Directive",
     content: body.content || "",
+    knowledgeBaseId: body.knowledgeBaseId || null,
     createdAt: now,
     updatedAt: now,
   };
@@ -35,6 +36,7 @@ export async function PUT(request: Request) {
     ...directives[index],
     name: body.name ?? directives[index].name,
     content: body.content ?? directives[index].content,
+    knowledgeBaseId: body.knowledgeBaseId !== undefined ? body.knowledgeBaseId : directives[index].knowledgeBaseId,
     updatedAt: new Date().toISOString(),
   };
   saveDirectives(directives);

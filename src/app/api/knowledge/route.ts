@@ -48,14 +48,21 @@ async function extractText(
   return buffer.toString("utf-8");
 }
 
-export async function GET() {
-  const files = getKnowledgeFiles();
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const kbId = searchParams.get("knowledgeBaseId");
+
+  let files = getKnowledgeFiles();
+  if (kbId) {
+    files = files.filter((f) => f.knowledgeBaseId === kbId);
+  }
   return NextResponse.json(files);
 }
 
 export async function POST(request: Request) {
   const formData = await request.formData();
   const file = formData.get("file") as File;
+  const knowledgeBaseId = formData.get("knowledgeBaseId") as string | null;
 
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -94,6 +101,7 @@ export async function POST(request: Request) {
     content,
     embedding: embeddings[index] || undefined,
     index,
+    knowledgeBaseId: knowledgeBaseId || undefined,
   }));
 
   const existingChunks = getKnowledgeChunks();
@@ -108,6 +116,7 @@ export async function POST(request: Request) {
     chunksCount: chunks.length,
     processedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
+    knowledgeBaseId: knowledgeBaseId || undefined,
   };
 
   const files = getKnowledgeFiles();
