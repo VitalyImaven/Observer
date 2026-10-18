@@ -118,7 +118,7 @@ export function useAudioCapture({
             setIsSpeaking(false);
             silenceStartRef.current = 0;
 
-            stopMediaRecorder().then((blob) => {
+            stopMediaRecorder()?.then((blob) => {
               if (blob && blob.size > 1000) {
                 console.log(`[AUDIO] Sending speech blob: ${blob.size} bytes`);
                 onSpeechCompleteRef.current(blob);
